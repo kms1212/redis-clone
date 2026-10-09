@@ -3,7 +3,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use crate::{
     command::Command,
     error::Error,
-    resp::{read_bulk, read_length},
+    resp::{read_array_len, read_bulk},
 };
 
 // Accepts any readable and writable stream, not just TcpStream, so tests can pass tokio::io::duplex.
@@ -16,12 +16,28 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut reader = BufReader::new(stream);
+    let result = serve(&mut reader, max_message_bytes, max_header_bytes).await;
+    if let Err(Error::Protocol(error)) = &result {
+        // Like real Redis: tell the client what was wrong, then close the connection.
+        reader.get_mut().write_all(&error.reply()).await?;
+    }
+    result
+}
 
-    while let Some(count) = read_length(&mut reader, b'*', max_header_bytes).await? {
+/// Reads and answers commands until the client disconnects or sends something malformed.
+async fn serve<S>(
+    reader: &mut BufReader<S>,
+    max_message_bytes: usize,
+    max_header_bytes: usize,
+) -> Result<(), Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    while let Some(count) = read_array_len(reader, max_header_bytes).await? {
         // No with_capacity(count): trusting count would let a single `*999999999` line reserve a lot of memory.
         let mut frame = Vec::new();
         for _ in 0..count {
-            frame.push(read_bulk(&mut reader, max_message_bytes, max_header_bytes).await?);
+            frame.push(read_bulk(reader, max_message_bytes, max_header_bytes).await?);
         }
 
         // Real Redis sends no reply to an empty array (`*0\r\n`) either.
@@ -90,5 +106,26 @@ mod tests {
             .unwrap();
         // If `*0` had produced a reply, it would arrive before PONG.
         assert_eq!(read_reply(&mut client, 7).await, b"+PONG\r\n");
+    }
+
+    #[tokio::test]
+    async fn protocol_error_is_reported_then_connection_closes() {
+        let mut client = connect();
+        client
+            .write_all(b"*1\r\n$4\r\nPING\r\n*1\r\n+PING\r\n*1\r\n$4\r\nPING\r\n")
+            .await
+            .unwrap();
+
+        // Reading to the end only finishes if the server closes the connection.
+        let mut replies = Vec::new();
+        timeout(Duration::from_secs(1), client.read_to_end(&mut replies))
+            .await
+            .expect("server should close the connection")
+            .unwrap();
+        // The command before the error is answered; the one after it is not.
+        assert_eq!(
+            replies,
+            b"+PONG\r\n-ERR Protocol error: expected '$', got '+'\r\n"
+        );
     }
 }
