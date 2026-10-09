@@ -1,21 +1,30 @@
-use super::{Command, wrong_args_reply};
+use super::{CommandSpec, wrong_args_reply};
 use crate::{db::Store, reply::Reply};
 
 /// `SET key value`. Options (EX, PX, NX, XX, ...) arrive in S04; until then any extra
 /// argument is a syntax error, which matches real Redis only for unknown options.
-pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Reply> {
-    let mut args = args.into_iter();
-    match (args.next(), args.next(), args.next()) {
-        (Some(key), Some(value), None) => Ok(Command::Set { key, value }),
-        (Some(_), Some(_), Some(_)) => Err(Reply::Error(b"ERR syntax error".to_vec())),
-        _ => Err(wrong_args_reply("set")),
-    }
+pub(crate) struct Set {
+    key: Vec<u8>,
+    value: Vec<u8>,
 }
 
-pub(super) fn execute(store: &mut Store, key: Vec<u8>, value: Vec<u8>) -> Reply {
-    // Both are moved in: the bytes read from the socket become the stored value as is.
-    store.insert(key, value);
-    Reply::Simple("OK")
+impl CommandSpec for Set {
+    const NAME: &'static [u8] = b"SET";
+
+    fn parse(args: Vec<Vec<u8>>) -> Result<Self, Reply> {
+        let mut args = args.into_iter();
+        match (args.next(), args.next(), args.next()) {
+            (Some(key), Some(value), None) => Ok(Self { key, value }),
+            (Some(_), Some(_), Some(_)) => Err(Reply::Error(b"ERR syntax error".to_vec())),
+            _ => Err(wrong_args_reply(Self::NAME)),
+        }
+    }
+
+    fn execute(self, store: &mut Store) -> Reply {
+        // Both are moved in: the bytes read from the socket become the stored value as is.
+        store.insert(self.key, self.value);
+        Reply::Simple("OK")
+    }
 }
 
 #[cfg(test)]

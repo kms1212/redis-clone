@@ -1,21 +1,27 @@
-use super::{Command, wrong_args_reply};
-use crate::reply::Reply;
+use super::{CommandSpec, wrong_args_reply};
+use crate::{db::Store, reply::Reply};
 
-/// `args` excludes the command name (`PING`).
-pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Reply> {
-    // into_iter takes ownership of each argument instead of copying it.
-    let mut args = args.into_iter();
-    match (args.next(), args.next()) {
-        (None, _) => Ok(Command::Ping(None)),
-        (Some(message), None) => Ok(Command::Ping(Some(message))),
-        _ => Err(wrong_args_reply("ping")),
-    }
+pub(crate) struct Ping {
+    message: Option<Vec<u8>>,
 }
 
-pub(super) fn execute(message: Option<Vec<u8>>) -> Reply {
-    match message {
-        None => Reply::Simple("PONG"),
-        Some(message) => Reply::Bulk(message),
+impl CommandSpec for Ping {
+    const NAME: &'static [u8] = b"PING";
+
+    fn parse(args: Vec<Vec<u8>>) -> Result<Self, Reply> {
+        // into_iter takes ownership of each argument instead of copying it.
+        let mut args = args.into_iter();
+        match (args.next(), args.next()) {
+            (message, None) => Ok(Self { message }),
+            _ => Err(wrong_args_reply(Self::NAME)),
+        }
+    }
+
+    fn execute(self, _store: &mut Store) -> Reply {
+        match self.message {
+            None => Reply::Simple("PONG"),
+            Some(message) => Reply::Bulk(message),
+        }
     }
 }
 

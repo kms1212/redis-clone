@@ -1,22 +1,27 @@
-use super::{Command, wrong_args_reply};
+use super::{CommandSpec, wrong_args_reply};
 use crate::{db::Store, reply::Reply};
 
-pub(super) fn parse(keys: Vec<Vec<u8>>) -> Result<Command, Reply> {
-    if keys.is_empty() {
-        return Err(wrong_args_reply("del"));
-    }
-    Ok(Command::Del(keys))
+pub(crate) struct Del {
+    keys: Vec<Vec<u8>>,
 }
 
-/// Replies with how many keys were actually removed. A key listed twice counts once,
-/// because the second removal finds nothing.
-pub(super) fn execute(store: &mut Store, keys: &[Vec<u8>]) -> Reply {
-    let removed = keys
-        .iter()
-        .filter(|key| store.remove(*key).is_some())
-        .count();
-    // Fits: an array holds at most i32::MAX elements (see resp::read_array_len).
-    Reply::Integer(removed as i64)
+impl CommandSpec for Del {
+    const NAME: &'static [u8] = b"DEL";
+
+    fn parse(keys: Vec<Vec<u8>>) -> Result<Self, Reply> {
+        if keys.is_empty() {
+            return Err(wrong_args_reply(Self::NAME));
+        }
+        Ok(Self { keys })
+    }
+
+    /// Replies with how many keys were actually removed. A key listed twice counts once,
+    /// because the second removal finds nothing.
+    fn execute(self, store: &mut Store) -> Reply {
+        let removed = self.keys.iter().filter(|key| store.remove(*key).is_some()).count();
+        // Fits: an array holds at most i32::MAX elements (see resp::read_array_len).
+        Reply::Integer(removed as i64)
+    }
 }
 
 #[cfg(test)]

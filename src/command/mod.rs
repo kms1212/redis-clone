@@ -1,42 +1,67 @@
-mod del;
-mod echo;
-mod exists;
-mod get;
-mod ping;
-mod set;
+//! Command dispatch. This module looks commands up by name and runs them, but never looks
+//! at a command's arguments: each command module owns its own type, parsing, and execution.
 
 use std::{collections::HashMap, sync::LazyLock};
 
 use crate::{db::Store, reply::Reply};
 
-/// Each command module's `parse`.
+/// What every command module provides.
+trait CommandSpec: Sized {
+    /// Uppercase name, as looked up in the table.
+    const NAME: &'static [u8];
+    /// Validates the arguments (the command name excluded). On failure, returns the error
+    /// reply to send back to the client.
+    fn parse(args: Vec<Vec<u8>>) -> Result<Self, Reply>;
+    /// Consumes the command so its arguments can move into the reply or the store.
+    fn execute(self, store: &mut Store) -> Reply;
+}
+
+/// Parses into a `Command`: one entry per command in the lookup table.
 type Parser = fn(Vec<Vec<u8>>) -> Result<Command, Reply>;
 
 /// Longest command name the table may hold. A longer name cannot be a known command.
 const MAX_NAME_LEN: usize = 16;
 
-/// Uppercase command name → its parser. Built once, the first time a command arrives.
-/// Adding a command takes one line here, one `Command` variant, and one `execute` arm.
-static COMMANDS: LazyLock<HashMap<&'static [u8], Parser>> = LazyLock::new(|| {
-    let table: [(&'static [u8], Parser); 6] = [
-        (b"PING", ping::parse),
-        (b"ECHO", echo::parse),
-        (b"SET", set::parse),
-        (b"GET", get::parse),
-        (b"DEL", del::parse),
-        (b"EXISTS", exists::parse),
-    ];
-    HashMap::from(table)
-});
+/// Generates everything that lists every command: the `mod` declarations, the `Command`
+/// enum, the lookup table, and `execute`. A new command is one line in the invocation below
+/// plus its own module.
+macro_rules! commands {
+    ($($module:ident::$command:ident),+ $(,)?) => {
+        $(mod $module;)+
 
-/// A parsed command. Arguments are validated in `parse`, so every value here can be executed as is.
-pub(crate) enum Command {
-    Ping(Option<Vec<u8>>),
-    Echo(Vec<u8>),
-    Set { key: Vec<u8>, value: Vec<u8> },
-    Get(Vec<u8>),
-    Del(Vec<Vec<u8>>),
-    Exists(Vec<Vec<u8>>),
+        /// A parsed command, ready to execute.
+        pub(crate) enum Command {
+            $($command($module::$command),)+
+        }
+
+        /// Uppercase command name → parser. Built once, the first time a command arrives.
+        static COMMANDS: LazyLock<HashMap<&'static [u8], Parser>> = LazyLock::new(|| {
+            HashMap::from([$((
+                <$module::$command as CommandSpec>::NAME,
+                // A closure that captures nothing coerces to a plain function pointer.
+                (|args: Vec<Vec<u8>>| {
+                    <$module::$command as CommandSpec>::parse(args).map(Command::$command)
+                }) as Parser,
+            ),)+])
+        });
+
+        impl Command {
+            pub(crate) fn execute(self, store: &mut Store) -> Reply {
+                match self {
+                    $(Self::$command(command) => command.execute(store),)+
+                }
+            }
+        }
+    };
+}
+
+commands! {
+    ping::Ping,
+    echo::Echo,
+    set::Set,
+    get::Get,
+    del::Del,
+    exists::Exists,
 }
 
 impl Command {
@@ -46,19 +71,6 @@ impl Command {
         match uppercase(name, &mut buffer).and_then(|key| COMMANDS.get(key)) {
             Some(parse) => parse(args),
             None => Err(unknown_command_reply(name, &args)),
-        }
-    }
-
-    // Consumes self so the arguments it holds can be moved into the reply or the store
-    // without copying.
-    pub(crate) fn execute(self, store: &mut Store) -> Reply {
-        match self {
-            Self::Ping(message) => ping::execute(message),
-            Self::Echo(message) => echo::execute(message),
-            Self::Set { key, value } => set::execute(store, key, value),
-            Self::Get(key) => get::execute(store, &key),
-            Self::Del(keys) => del::execute(store, &keys),
-            Self::Exists(keys) => exists::execute(store, &keys),
         }
     }
 }
@@ -73,8 +85,11 @@ fn uppercase<'a>(name: &[u8], buffer: &'a mut [u8; MAX_NAME_LEN]) -> Option<&'a 
 }
 
 /// Real Redis uses the same message for every command, with the lowercase command name.
-fn wrong_args_reply(name: &str) -> Reply {
-    Reply::Error(format!("ERR wrong number of arguments for '{name}' command").into_bytes())
+fn wrong_args_reply(name: &[u8]) -> Reply {
+    let mut message = b"ERR wrong number of arguments for '".to_vec();
+    message.extend(name.to_ascii_lowercase());
+    message.extend_from_slice(b"' command");
+    Reply::Error(message)
 }
 
 fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Reply {

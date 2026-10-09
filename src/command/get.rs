@@ -1,20 +1,28 @@
-use super::{Command, wrong_args_reply};
+use super::{CommandSpec, wrong_args_reply};
 use crate::{db::Store, reply::Reply};
 
-pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Reply> {
-    let mut args = args.into_iter();
-    match (args.next(), args.next()) {
-        (Some(key), None) => Ok(Command::Get(key)),
-        _ => Err(wrong_args_reply("get")),
-    }
+pub(crate) struct Get {
+    key: Vec<u8>,
 }
 
-pub(super) fn execute(store: &Store, key: &[u8]) -> Reply {
-    match store.get(key) {
-        // A copy is unavoidable here: the store keeps its value, and the reply needs bytes it
-        // owns, because the lock is released before the reply is written.
-        Some(value) => Reply::Bulk(value.clone()),
-        None => Reply::Null,
+impl CommandSpec for Get {
+    const NAME: &'static [u8] = b"GET";
+
+    fn parse(args: Vec<Vec<u8>>) -> Result<Self, Reply> {
+        let mut args = args.into_iter();
+        match (args.next(), args.next()) {
+            (Some(key), None) => Ok(Self { key }),
+            _ => Err(wrong_args_reply(Self::NAME)),
+        }
+    }
+
+    fn execute(self, store: &mut Store) -> Reply {
+        match store.get(&self.key) {
+            // A copy is unavoidable here: the store keeps its value, and the reply needs bytes
+            // it owns, because the lock is released before the reply is written.
+            Some(value) => Reply::Bulk(value.clone()),
+            None => Reply::Null,
+        }
     }
 }
 

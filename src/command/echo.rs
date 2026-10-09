@@ -1,17 +1,25 @@
-use super::{Command, wrong_args_reply};
-use crate::reply::Reply;
+use super::{CommandSpec, wrong_args_reply};
+use crate::{db::Store, reply::Reply};
 
-/// `args` excludes the command name (`ECHO`). ECHO takes exactly one argument.
-pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Reply> {
-    let mut args = args.into_iter();
-    match (args.next(), args.next()) {
-        (Some(message), None) => Ok(Command::Echo(message)),
-        _ => Err(wrong_args_reply("echo")),
-    }
+/// ECHO takes exactly one argument.
+pub(crate) struct Echo {
+    message: Vec<u8>,
 }
 
-pub(super) fn execute(message: Vec<u8>) -> Reply {
-    Reply::Bulk(message)
+impl CommandSpec for Echo {
+    const NAME: &'static [u8] = b"ECHO";
+
+    fn parse(args: Vec<Vec<u8>>) -> Result<Self, Reply> {
+        let mut args = args.into_iter();
+        match (args.next(), args.next()) {
+            (Some(message), None) => Ok(Self { message }),
+            _ => Err(wrong_args_reply(Self::NAME)),
+        }
+    }
+
+    fn execute(self, _store: &mut Store) -> Reply {
+        Reply::Bulk(self.message)
+    }
 }
 
 #[cfg(test)]

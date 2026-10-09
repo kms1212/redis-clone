@@ -1,18 +1,27 @@
-use super::{Command, wrong_args_reply};
+use super::{CommandSpec, wrong_args_reply};
 use crate::{db::Store, reply::Reply};
 
-pub(super) fn parse(keys: Vec<Vec<u8>>) -> Result<Command, Reply> {
-    if keys.is_empty() {
-        return Err(wrong_args_reply("exists"));
-    }
-    Ok(Command::Exists(keys))
+pub(crate) struct Exists {
+    keys: Vec<Vec<u8>>,
 }
 
-/// Replies with how many of the listed keys exist. Unlike DEL, a key listed twice counts twice.
-pub(super) fn execute(store: &Store, keys: &[Vec<u8>]) -> Reply {
-    let found = keys.iter().filter(|key| store.contains_key(*key)).count();
-    // Fits: an array holds at most i32::MAX elements (see resp::read_array_len).
-    Reply::Integer(found as i64)
+impl CommandSpec for Exists {
+    const NAME: &'static [u8] = b"EXISTS";
+
+    fn parse(keys: Vec<Vec<u8>>) -> Result<Self, Reply> {
+        if keys.is_empty() {
+            return Err(wrong_args_reply(Self::NAME));
+        }
+        Ok(Self { keys })
+    }
+
+    /// Replies with how many of the listed keys exist. Unlike DEL, a key listed twice counts
+    /// twice.
+    fn execute(self, store: &mut Store) -> Reply {
+        let found = self.keys.iter().filter(|key| store.contains_key(*key)).count();
+        // Fits: an array holds at most i32::MAX elements (see resp::read_array_len).
+        Reply::Integer(found as i64)
+    }
 }
 
 #[cfg(test)]
