@@ -2,7 +2,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt};
 
 use crate::error::Error;
 
-// 소켓이 아니라 "줄 단위로 읽을 수 있는 무엇이든"을 받습니다. 테스트에서는 메모리 버퍼를 넘깁니다.
+// Accepts any buffered reader, not just a socket, so tests can pass an in-memory buffer.
 pub(crate) async fn read_length<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     prefix: u8,

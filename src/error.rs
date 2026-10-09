@@ -16,7 +16,7 @@ impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "{error}"),
-            Self::InvalidRequest => write!(formatter, "잘못된 입력입니다"),
+            Self::InvalidRequest => write!(formatter, "invalid request"),
         }
     }
 }

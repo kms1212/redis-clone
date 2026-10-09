@@ -1,9 +1,9 @@
 use super::Command;
 use crate::resp::{bulk_string, error_reply};
 
-/// `args` 는 커맨드 이름(`PING`)을 뺀 나머지입니다.
+/// `args` excludes the command name (`PING`).
 pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Vec<u8>> {
-    // into_iter 로 꺼내면 인자를 복사하지 않고 소유권째 가져옵니다.
+    // into_iter takes ownership of each argument instead of copying it.
     let mut args = args.into_iter();
     match (args.next(), args.next()) {
         (None, _) => Ok(Command::Ping(None)),
@@ -26,11 +26,11 @@ mod tests {
     use crate::command::reply_for;
 
     #[test]
-    fn ping_응답이_진짜_redis와_같다() {
+    fn ping_replies_match_real_redis() {
         assert_eq!(reply_for(&[b"PiNg"]), b"+PONG\r\n");
         assert_eq!(
-            reply_for(&[b"PING", "한글".as_bytes()]),
-            "$6\r\n한글\r\n".as_bytes()
+            reply_for(&[b"PING", "\u{d55c}\u{ae00}".as_bytes()]),
+            "$6\r\n\u{d55c}\u{ae00}\r\n".as_bytes()
         );
         assert_eq!(
             reply_for(&[b"PING", b"a", b"b"]),

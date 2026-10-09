@@ -57,7 +57,7 @@ async fn main() -> Result<(), Error> {
         let (stream, peer) = match listener.accept().await {
             Ok(connection) => connection,
             Err(error) => {
-                eprintln!("접속을 받지 못했습니다: {error}");
+                eprintln!("failed to accept connection: {error}");
                 continue;
             }
         };
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Error> {
         tokio::spawn(async move {
             if let Err(error) = handle_connection(stream, max_message_bytes, max_header_bytes).await
             {
-                eprintln!("{peer} 연결 종료: {error}");
+                eprintln!("{peer} disconnected: {error}");
             }
         });
     }

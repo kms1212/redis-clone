@@ -7,5 +7,5 @@ edition = "2024"
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util"] }
 
 [dev-dependencies]
-# 테스트에서 응답이 안 올 때 무한정 기다리지 않도록 timeout 을 쓰기 위해서만 켭니다.
+# Only for `timeout` in tests, so a missing reply fails instead of hanging.
 tokio = { version = "1", features = ["time"] }
