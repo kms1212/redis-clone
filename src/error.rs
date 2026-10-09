@@ -20,24 +20,30 @@ pub(crate) enum ProtocolError {
 }
 
 impl ProtocolError {
-    /// Built from raw bytes, not Display: `ExpectedBulk` may hold a non-UTF-8 byte
-    /// that real Redis sends back unchanged.
-    pub(crate) fn reply(&self) -> Vec<u8> {
-        let mut message = b"ERR Protocol error: ".to_vec();
+    /// The text after "Protocol error: ", shared by the client reply and the server log.
+    /// Raw bytes rather than a String: `ExpectedBulk` may hold a non-UTF-8 byte that
+    /// real Redis sends back unchanged.
+    fn message(&self) -> Vec<u8> {
         match self {
-            Self::InvalidMultibulkLength => message.extend_from_slice(b"invalid multibulk length"),
-            Self::InvalidBulkLength => message.extend_from_slice(b"invalid bulk length"),
+            Self::InvalidMultibulkLength => b"invalid multibulk length".to_vec(),
+            Self::InvalidBulkLength => b"invalid bulk length".to_vec(),
             Self::ExpectedBulk(got) => {
                 // Real Redis replaces \r and \n with spaces so the error stays on one line.
                 let got = match got {
                     b'\r' | b'\n' => b' ',
                     other => *other,
                 };
-                message.extend_from_slice(b"expected '$', got '");
+                let mut message = b"expected '$', got '".to_vec();
                 message.push(got);
                 message.push(b'\'');
+                message
             }
         }
+    }
+
+    pub(crate) fn reply(&self) -> Vec<u8> {
+        let mut message = b"ERR Protocol error: ".to_vec();
+        message.extend_from_slice(&self.message());
         error_reply(&message)
     }
 }
@@ -66,13 +72,7 @@ impl fmt::Display for Error {
 
 impl fmt::Display for ProtocolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidMultibulkLength => write!(formatter, "invalid multibulk length"),
-            Self::InvalidBulkLength => write!(formatter, "invalid bulk length"),
-            Self::ExpectedBulk(got) => {
-                write!(formatter, "expected '$', got '{}'", got.escape_ascii())
-            }
-        }
+        write!(formatter, "{}", self.message().escape_ascii())
     }
 }
 
