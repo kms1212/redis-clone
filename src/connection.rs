@@ -6,6 +6,9 @@ use crate::{
     resp::{read_array_len, read_bulk},
 };
 
+/// Enough for almost every command; larger arrays just grow as usual.
+const MAX_PREALLOCATED_ARGS: usize = 16;
+
 // Accepts any readable and writable stream, not just TcpStream, so tests can pass tokio::io::duplex.
 pub(crate) async fn handle_connection<S>(
     stream: S,
@@ -34,20 +37,19 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     while let Some(count) = read_array_len(reader, max_header_bytes).await? {
-        // No with_capacity(count): trusting count would let a single `*999999999` line reserve a lot of memory.
-        let mut frame = Vec::new();
-        for _ in 0..count {
-            frame.push(read_bulk(reader, max_message_bytes, max_header_bytes).await?);
-        }
-
         // Real Redis sends no reply to an empty array (`*0\r\n`) either.
-        if frame.is_empty() {
+        if count == 0 {
             continue;
         }
-        // Takes ownership of the first element. The rest only shift their pointers; no bytes are copied.
-        let name = frame.remove(0);
+        let name = read_bulk(reader, max_message_bytes, max_header_bytes).await?;
 
-        let reply = match Command::parse(&name, frame) {
+        // Capped: trusting count alone would let a single `*999999999` line reserve a lot of memory.
+        let mut args = Vec::with_capacity((count - 1).min(MAX_PREALLOCATED_ARGS));
+        for _ in 1..count {
+            args.push(read_bulk(reader, max_message_bytes, max_header_bytes).await?);
+        }
+
+        let reply = match Command::parse(&name, args) {
             Ok(command) => command.execute(),
             Err(reply) => reply,
         };
