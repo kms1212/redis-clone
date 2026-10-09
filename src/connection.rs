@@ -64,8 +64,14 @@ mod tests {
 
     use super::*;
 
-    /// Attaches the server to an in-memory fake socket and returns the client end.
+    /// Attaches a server with its own empty store to an in-memory fake socket and returns
+    /// the client end.
     fn connect() -> DuplexStream {
+        connect_to(Db::default())
+    }
+
+    /// Like `connect`, but the server uses `db`, so several connections can share it.
+    fn connect_to(db: Db) -> DuplexStream {
         let (client, server) = duplex(4096);
         tokio::spawn(handle_connection(
             server,
@@ -73,7 +79,7 @@ mod tests {
                 message_bytes: 1024,
                 header_bytes: 64,
             },
-            Db::default(),
+            db,
         ));
         client
     }
@@ -131,5 +137,24 @@ mod tests {
             replies,
             b"+PONG\r\n-ERR Protocol error: expected '$', got '+'\r\n"
         );
+    }
+
+    #[tokio::test]
+    async fn connections_share_one_store() {
+        let db = Db::default();
+        let mut writer = connect_to(db.clone());
+        let mut reader = connect_to(db);
+
+        writer
+            .write_all(b"*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n")
+            .await
+            .unwrap();
+        assert_eq!(read_reply(&mut writer, 5).await, b"+OK\r\n");
+
+        reader
+            .write_all(b"*2\r\n$3\r\nGET\r\n$1\r\nk\r\n")
+            .await
+            .unwrap();
+        assert_eq!(read_reply(&mut reader, 7).await, b"$1\r\nv\r\n");
     }
 }

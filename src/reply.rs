@@ -7,6 +7,10 @@ pub(crate) enum Reply {
     Error(Vec<u8>),
     /// `$5\r\nhello\r\n`. Binary safe: the length prefix, not a terminator, ends the data.
     Bulk(Vec<u8>),
+    /// `:2\r\n`.
+    Integer(i64),
+    /// `$-1\r\n`, the "null bulk string" for a missing key. Not the same as an empty `Bulk`.
+    Null,
 }
 
 impl Reply {
@@ -34,6 +38,8 @@ impl Reply {
                 out.extend_from_slice(b"\r\n");
                 out
             }
+            Self::Integer(number) => format!(":{number}\r\n").into_bytes(),
+            Self::Null => b"$-1\r\n".to_vec(),
         }
     }
 }
@@ -61,6 +67,8 @@ mod tests {
         );
         assert_eq!(Reply::Bulk(b"hi".to_vec()).encode(), b"$2\r\nhi\r\n");
         assert_eq!(Reply::Bulk(Vec::new()).encode(), b"$0\r\n\r\n");
+        assert_eq!(Reply::Integer(2).encode(), b":2\r\n");
+        assert_eq!(Reply::Null.encode(), b"$-1\r\n");
         // Length is counted in bytes: two Hangul syllables are 6 bytes.
         assert_eq!(
             Reply::Bulk("\u{d55c}\u{ae00}".into()).encode(),

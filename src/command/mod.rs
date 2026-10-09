@@ -1,5 +1,9 @@
+mod del;
 mod echo;
+mod exists;
+mod get;
 mod ping;
+mod set;
 
 use crate::{db::Store, reply::Reply};
 
@@ -7,6 +11,10 @@ use crate::{db::Store, reply::Reply};
 pub(crate) enum Command {
     Ping(Option<Vec<u8>>),
     Echo(Vec<u8>),
+    Set { key: Vec<u8>, value: Vec<u8> },
+    Get(Vec<u8>),
+    Del(Vec<Vec<u8>>),
+    Exists(Vec<Vec<u8>>),
 }
 
 impl Command {
@@ -18,16 +26,32 @@ impl Command {
         if name.eq_ignore_ascii_case(b"ECHO") {
             return echo::parse(args);
         }
+        if name.eq_ignore_ascii_case(b"SET") {
+            return set::parse(args);
+        }
+        if name.eq_ignore_ascii_case(b"GET") {
+            return get::parse(args);
+        }
+        if name.eq_ignore_ascii_case(b"DEL") {
+            return del::parse(args);
+        }
+        if name.eq_ignore_ascii_case(b"EXISTS") {
+            return exists::parse(args);
+        }
 
         Err(unknown_command_reply(name, &args))
     }
 
     // Consumes self so the arguments it holds can be moved into the reply or the store
     // without copying.
-    pub(crate) fn execute(self, _store: &mut Store) -> Reply {
+    pub(crate) fn execute(self, store: &mut Store) -> Reply {
         match self {
             Self::Ping(message) => ping::execute(message),
             Self::Echo(message) => echo::execute(message),
+            Self::Set { key, value } => set::execute(store, key, value),
+            Self::Get(key) => get::execute(store, &key),
+            Self::Del(keys) => del::execute(store, &keys),
+            Self::Exists(keys) => exists::execute(store, &keys),
         }
     }
 }
@@ -54,14 +78,20 @@ fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Reply {
     Reply::Error(message)
 }
 
-/// Test helper: "what reply do these arguments produce?" in one line.
+/// Test helper: runs one command against `store` and returns its reply.
 #[cfg(test)]
-pub(crate) fn reply_for(frame: &[&[u8]]) -> Reply {
+pub(crate) fn reply_in(store: &mut Store, frame: &[&[u8]]) -> Reply {
     let args = frame[1..].iter().map(|arg| arg.to_vec()).collect();
     match Command::parse(frame[0], args) {
-        Ok(command) => command.execute(&mut Store::new()),
+        Ok(command) => command.execute(store),
         Err(reply) => reply,
     }
+}
+
+/// Test helper for commands that do not touch the store.
+#[cfg(test)]
+pub(crate) fn reply_for(frame: &[&[u8]]) -> Reply {
+    reply_in(&mut Store::new(), frame)
 }
 
 #[cfg(test)]
