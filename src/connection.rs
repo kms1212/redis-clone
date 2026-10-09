@@ -18,7 +18,7 @@ where
     let result = serve(&mut reader, limits).await;
     if let Err(Error::Protocol(error)) = &result {
         // Like real Redis: tell the client what was wrong, then close the connection.
-        reader.get_mut().write_all(&error.reply()).await?;
+        reader.get_mut().write_all(&error.reply().encode()).await?;
     }
     result
 }
@@ -45,7 +45,7 @@ where
             Ok(command) => command.execute(),
             Err(reply) => reply,
         };
-        reader.get_mut().write_all(&reply).await?;
+        reader.get_mut().write_all(&reply.encode()).await?;
     }
     Ok(())
 }

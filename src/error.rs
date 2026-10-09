@@ -1,6 +1,6 @@
 use std::{fmt, io};
 
-use crate::resp::error_reply;
+use crate::reply::Reply;
 
 #[derive(Debug)]
 pub(crate) enum Error {
@@ -41,10 +41,10 @@ impl ProtocolError {
         }
     }
 
-    pub(crate) fn reply(&self) -> Vec<u8> {
+    pub(crate) fn reply(&self) -> Reply {
         let mut message = b"ERR Protocol error: ".to_vec();
         message.extend_from_slice(&self.message());
-        error_reply(&message)
+        Reply::Error(message)
     }
 }
 
@@ -84,21 +84,21 @@ mod tests {
     fn protocol_error_replies_match_real_redis() {
         assert_eq!(
             ProtocolError::InvalidMultibulkLength.reply(),
-            b"-ERR Protocol error: invalid multibulk length\r\n"
+            Reply::Error(b"ERR Protocol error: invalid multibulk length".to_vec())
         );
         assert_eq!(
             ProtocolError::ExpectedBulk(b'+').reply(),
-            b"-ERR Protocol error: expected '$', got '+'\r\n"
+            Reply::Error(b"ERR Protocol error: expected '$', got '+'".to_vec())
         );
         // A line break would split the reply in two, so it becomes a space.
         assert_eq!(
             ProtocolError::ExpectedBulk(b'\r').reply(),
-            b"-ERR Protocol error: expected '$', got ' '\r\n"
+            Reply::Error(b"ERR Protocol error: expected '$', got ' '".to_vec())
         );
         // Non-UTF-8 bytes go out unchanged.
         assert_eq!(
             ProtocolError::ExpectedBulk(0xff).reply(),
-            b"-ERR Protocol error: expected '$', got '\xff'\r\n"
+            Reply::Error(b"ERR Protocol error: expected '$', got '\xff'".to_vec())
         );
     }
 }

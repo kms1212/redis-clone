@@ -1,7 +1,7 @@
 mod echo;
 mod ping;
 
-use crate::resp::error_reply;
+use crate::reply::Reply;
 
 /// A parsed command. Arguments are validated in `parse`, so every value here can be executed as is.
 pub(crate) enum Command {
@@ -10,8 +10,8 @@ pub(crate) enum Command {
 }
 
 impl Command {
-    /// On failure, returns the error reply to send back to the client unchanged.
-    pub(crate) fn parse(name: &[u8], args: Vec<Vec<u8>>) -> Result<Self, Vec<u8>> {
+    /// On failure, returns the error reply to send back to the client.
+    pub(crate) fn parse(name: &[u8], args: Vec<Vec<u8>>) -> Result<Self, Reply> {
         if name.eq_ignore_ascii_case(b"PING") {
             return ping::parse(args);
         }
@@ -23,7 +23,7 @@ impl Command {
     }
 
     // Consumes self so the arguments it holds can be moved into the reply without copying.
-    pub(crate) fn execute(self) -> Vec<u8> {
+    pub(crate) fn execute(self) -> Reply {
         match self {
             Self::Ping(message) => ping::execute(message),
             Self::Echo(message) => echo::execute(message),
@@ -32,11 +32,11 @@ impl Command {
 }
 
 /// Real Redis uses the same message for every command, with the lowercase command name.
-fn wrong_args_reply(name: &str) -> Vec<u8> {
-    error_reply(format!("ERR wrong number of arguments for '{name}' command").as_bytes())
+fn wrong_args_reply(name: &str) -> Reply {
+    Reply::Error(format!("ERR wrong number of arguments for '{name}' command").into_bytes())
 }
 
-fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Vec<u8> {
+fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Reply {
     // Built from raw bytes, not String: a non-UTF-8 name must be echoed back exactly as received.
     let mut message = b"ERR unknown command '".to_vec();
     message.extend_from_slice(name);
@@ -50,12 +50,12 @@ fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Vec<u8> {
             message.extend_from_slice(b"' ");
         }
     }
-    error_reply(&message)
+    Reply::Error(message)
 }
 
 /// Test helper: "what reply do these arguments produce?" in one line.
 #[cfg(test)]
-pub(crate) fn reply_for(frame: &[&[u8]]) -> Vec<u8> {
+pub(crate) fn reply_for(frame: &[&[u8]]) -> Reply {
     let args = frame[1..].iter().map(|arg| arg.to_vec()).collect();
     match Command::parse(frame[0], args) {
         Ok(command) => command.execute(),
@@ -71,11 +71,13 @@ mod tests {
     fn unknown_command_message_depends_on_args() {
         assert_eq!(
             reply_for(&[b"garbage"]),
-            b"-ERR unknown command 'garbage'\r\n"
+            Reply::Error(b"ERR unknown command 'garbage'".to_vec())
         );
         assert_eq!(
             reply_for(&[b"NOPE", b"a", b"b"]),
-            b"-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n"
+            Reply::Error(
+                b"ERR unknown command 'NOPE', with args beginning with: 'a' 'b' ".to_vec()
+            )
         );
     }
 }

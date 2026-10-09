@@ -1,6 +1,7 @@
 mod command;
 mod connection;
 mod error;
+mod reply;
 mod resp;
 
 use std::{env, net::IpAddr};

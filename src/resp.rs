@@ -109,20 +109,6 @@ fn parse_integer(bytes: &[u8]) -> Option<i64> {
     std::str::from_utf8(bytes).ok()?.parse().ok()
 }
 
-pub(crate) fn bulk_string(value: &[u8]) -> Vec<u8> {
-    let mut reply = format!("${}\r\n", value.len()).into_bytes();
-    reply.extend_from_slice(value);
-    reply.extend_from_slice(b"\r\n");
-    reply
-}
-
-pub(crate) fn error_reply(message: &[u8]) -> Vec<u8> {
-    let mut reply = vec![b'-'];
-    reply.extend_from_slice(message);
-    reply.extend_from_slice(b"\r\n");
-    reply
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
