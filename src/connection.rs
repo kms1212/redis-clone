@@ -3,7 +3,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use crate::{
     command::Command,
     error::Error,
-    resp::{read_array_len, read_bulk},
+    resp::{Args, read_array_len},
 };
 
 // Accepts any readable and writable stream, not just TcpStream, so tests can pass tokio::io::duplex.
@@ -34,20 +34,13 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     while let Some(count) = read_array_len(reader, max_header_bytes).await? {
-        // No with_capacity(count): trusting count would let a single `*999999999` line reserve a lot of memory.
-        let mut frame = Vec::new();
-        for _ in 0..count {
-            frame.push(read_bulk(reader, max_message_bytes, max_header_bytes).await?);
-        }
-
+        let mut args = Args::new(&mut *reader, count, max_message_bytes, max_header_bytes);
         // Real Redis sends no reply to an empty array (`*0\r\n`) either.
-        if frame.is_empty() {
+        let Some(name) = args.next().await? else {
             continue;
-        }
-        // Takes ownership of the first element. The rest only shift their pointers; no bytes are copied.
-        let name = frame.remove(0);
+        };
 
-        let reply = match Command::parse(&name, frame) {
+        let reply = match Command::parse(&name, &mut args).await? {
             Ok(command) => command.execute(),
             Err(reply) => reply,
         };

@@ -85,6 +85,56 @@ pub(crate) async fn read_bulk<R: AsyncBufRead + Unpin>(
     Ok(data)
 }
 
+/// The rest of one command array, read from the stream only when a command asks for it.
+pub(crate) struct Args<'a, R> {
+    reader: &'a mut R,
+    remaining: usize,
+    max_bytes: usize,
+    max_header_bytes: usize,
+}
+
+impl<'a, R: AsyncBufRead + Unpin> Args<'a, R> {
+    pub(crate) fn new(
+        reader: &'a mut R,
+        count: usize,
+        max_bytes: usize,
+        max_header_bytes: usize,
+    ) -> Self {
+        Self {
+            reader,
+            remaining: count,
+            max_bytes,
+            max_header_bytes,
+        }
+    }
+
+    /// Known from the array header, before any argument is read.
+    pub(crate) fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    pub(crate) async fn next(&mut self) -> Result<Option<Vec<u8>>, Error> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        self.remaining -= 1;
+        read_bulk(self.reader, self.max_bytes, self.max_header_bytes)
+            .await
+            .map(Some)
+    }
+
+    /// Reads every remaining argument. Even when a command already knows its reply, the whole
+    /// array must be consumed: real Redis reports a protocol error in a later element first,
+    /// and the next command has to start at the right byte.
+    pub(crate) async fn rest(&mut self) -> Result<Vec<Vec<u8>>, Error> {
+        let mut rest = Vec::new();
+        while let Some(arg) = self.next().await? {
+            rest.push(arg);
+        }
+        Ok(rest)
+    }
+}
+
 /// As strict as Redis's string2ll: no '+', no leading zeros, no "-0", no spaces.
 fn parse_integer(bytes: &[u8]) -> Option<i64> {
     let digits = bytes.strip_prefix(b"-").unwrap_or(bytes);

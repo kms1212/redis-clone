@@ -1,17 +1,23 @@
+use tokio::io::AsyncBufRead;
+
 use super::Command;
-use crate::resp::{bulk_string, error_reply};
+use crate::{
+    error::Error,
+    resp::{Args, bulk_string, error_reply},
+};
 
 /// `args` excludes the command name (`PING`).
-pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Vec<u8>> {
-    // into_iter takes ownership of each argument instead of copying it.
-    let mut args = args.into_iter();
-    match (args.next(), args.next()) {
-        (None, _) => Ok(Command::Ping(None)),
-        (Some(message), None) => Ok(Command::Ping(Some(message))),
-        _ => Err(error_reply(
+pub(super) async fn parse<R: AsyncBufRead + Unpin>(
+    args: &mut Args<'_, R>,
+) -> Result<Result<Command, Vec<u8>>, Error> {
+    // Arity is known from the array header, but the arguments must still be consumed.
+    if args.remaining() > 1 {
+        args.rest().await?;
+        return Ok(Err(error_reply(
             b"ERR wrong number of arguments for 'ping' command",
-        )),
+        )));
     }
+    Ok(Ok(Command::Ping(args.next().await?)))
 }
 
 pub(super) fn execute(message: Option<Vec<u8>>) -> Vec<u8> {
@@ -25,15 +31,15 @@ pub(super) fn execute(message: Option<Vec<u8>>) -> Vec<u8> {
 mod tests {
     use crate::command::reply_for;
 
-    #[test]
-    fn ping_replies_match_real_redis() {
-        assert_eq!(reply_for(&[b"PiNg"]), b"+PONG\r\n");
+    #[tokio::test]
+    async fn ping_replies_match_real_redis() {
+        assert_eq!(reply_for(&[b"PiNg"]).await, b"+PONG\r\n");
         assert_eq!(
-            reply_for(&[b"PING", "\u{d55c}\u{ae00}".as_bytes()]),
+            reply_for(&[b"PING", "\u{d55c}\u{ae00}".as_bytes()]).await,
             "$6\r\n\u{d55c}\u{ae00}\r\n".as_bytes()
         );
         assert_eq!(
-            reply_for(&[b"PING", b"a", b"b"]),
+            reply_for(&[b"PING", b"a", b"b"]).await,
             b"-ERR wrong number of arguments for 'ping' command\r\n"
         );
     }

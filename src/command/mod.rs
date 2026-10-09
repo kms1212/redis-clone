@@ -1,7 +1,12 @@
 mod echo;
 mod ping;
 
-use crate::resp::error_reply;
+use tokio::io::AsyncBufRead;
+
+use crate::{
+    error::Error,
+    resp::{Args, error_reply},
+};
 
 /// A parsed command. Arguments are validated in `parse`, so every value here can be executed as is.
 pub(crate) enum Command {
@@ -10,16 +15,21 @@ pub(crate) enum Command {
 }
 
 impl Command {
-    /// On failure, returns the error reply to send back to the client unchanged.
-    pub(crate) fn parse(name: &[u8], args: Vec<Vec<u8>>) -> Result<Self, Vec<u8>> {
+    /// The outer error means the stream itself failed. The inner `Err` is the error reply
+    /// to send back to the client unchanged.
+    pub(crate) async fn parse<R: AsyncBufRead + Unpin>(
+        name: &[u8],
+        args: &mut Args<'_, R>,
+    ) -> Result<Result<Self, Vec<u8>>, Error> {
         if name.eq_ignore_ascii_case(b"PING") {
-            return ping::parse(args);
+            return ping::parse(args).await;
         }
         if name.eq_ignore_ascii_case(b"ECHO") {
-            return echo::parse(args);
+            return echo::parse(args).await;
         }
 
-        Err(unknown_command_reply(name, &args))
+        let rest = args.rest().await?;
+        Ok(Err(unknown_command_reply(name, &rest)))
     }
 
     // Consumes self so the arguments it holds can be moved into the reply without copying.
@@ -50,9 +60,15 @@ fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Vec<u8> {
 
 /// Test helper: "what reply do these arguments produce?" in one line.
 #[cfg(test)]
-pub(crate) fn reply_for(frame: &[&[u8]]) -> Vec<u8> {
-    let args = frame[1..].iter().map(|arg| arg.to_vec()).collect();
-    match Command::parse(frame[0], args) {
+pub(crate) async fn reply_for(frame: &[&[u8]]) -> Vec<u8> {
+    // Commands now read from a stream, so the arguments are encoded back into RESP first.
+    let mut encoded = Vec::new();
+    for arg in &frame[1..] {
+        encoded.extend_from_slice(&crate::resp::bulk_string(arg));
+    }
+    let mut input = &encoded[..];
+    let mut args = Args::new(&mut input, frame.len() - 1, 1024, 64);
+    match Command::parse(frame[0], &mut args).await.unwrap() {
         Ok(command) => command.execute(),
         Err(reply) => reply,
     }
@@ -62,14 +78,14 @@ pub(crate) fn reply_for(frame: &[&[u8]]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn unknown_command_message_depends_on_args() {
+    #[tokio::test]
+    async fn unknown_command_message_depends_on_args() {
         assert_eq!(
-            reply_for(&[b"garbage"]),
+            reply_for(&[b"garbage"]).await,
             b"-ERR unknown command 'garbage'\r\n"
         );
         assert_eq!(
-            reply_for(&[b"NOPE", b"a", b"b"]),
+            reply_for(&[b"NOPE", b"a", b"b"]).await,
             b"-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n"
         );
     }
