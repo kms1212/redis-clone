@@ -1,7 +1,7 @@
 mod echo;
 mod ping;
 
-use crate::reply::Reply;
+use crate::{db::Store, reply::Reply};
 
 /// A parsed command. Arguments are validated in `parse`, so every value here can be executed as is.
 pub(crate) enum Command {
@@ -22,8 +22,9 @@ impl Command {
         Err(unknown_command_reply(name, &args))
     }
 
-    // Consumes self so the arguments it holds can be moved into the reply without copying.
-    pub(crate) fn execute(self) -> Reply {
+    // Consumes self so the arguments it holds can be moved into the reply or the store
+    // without copying.
+    pub(crate) fn execute(self, _store: &mut Store) -> Reply {
         match self {
             Self::Ping(message) => ping::execute(message),
             Self::Echo(message) => echo::execute(message),
@@ -58,7 +59,7 @@ fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Reply {
 pub(crate) fn reply_for(frame: &[&[u8]]) -> Reply {
     let args = frame[1..].iter().map(|arg| arg.to_vec()).collect();
     match Command::parse(frame[0], args) {
-        Ok(command) => command.execute(),
+        Ok(command) => command.execute(&mut Store::new()),
         Err(reply) => reply,
     }
 }

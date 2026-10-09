@@ -2,6 +2,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 use crate::{
     command::Command,
+    db::Db,
     error::Error,
     resp::{Limits, read_array_len, read_bulk},
 };
@@ -10,12 +11,12 @@ use crate::{
 const MAX_PREALLOCATED_ARGS: usize = 16;
 
 // Accepts any readable and writable stream, not just TcpStream, so tests can pass tokio::io::duplex.
-pub(crate) async fn handle_connection<S>(stream: S, limits: Limits) -> Result<(), Error>
+pub(crate) async fn handle_connection<S>(stream: S, limits: Limits, db: Db) -> Result<(), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut reader = BufReader::new(stream);
-    let result = serve(&mut reader, limits).await;
+    let result = serve(&mut reader, limits, &db).await;
     if let Err(Error::Protocol(error)) = &result {
         // Like real Redis: tell the client what was wrong, then close the connection.
         reader.get_mut().write_all(&error.reply().encode()).await?;
@@ -24,7 +25,7 @@ where
 }
 
 /// Reads and answers commands until the client disconnects or sends something malformed.
-async fn serve<S>(reader: &mut BufReader<S>, limits: Limits) -> Result<(), Error>
+async fn serve<S>(reader: &mut BufReader<S>, limits: Limits, db: &Db) -> Result<(), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -42,7 +43,9 @@ where
         }
 
         let reply = match Command::parse(&name, args) {
-            Ok(command) => command.execute(),
+            // The guard lives only inside this arm, so the lock is released before the reply
+            // is written below.
+            Ok(command) => command.execute(&mut db.lock()),
             Err(reply) => reply,
         };
         reader.get_mut().write_all(&reply.encode()).await?;
@@ -70,6 +73,7 @@ mod tests {
                 message_bytes: 1024,
                 header_bytes: 64,
             },
+            Db::default(),
         ));
         client
     }

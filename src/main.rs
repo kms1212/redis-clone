@@ -1,5 +1,6 @@
 mod command;
 mod connection;
+mod db;
 mod error;
 mod reply;
 mod resp;
@@ -8,7 +9,7 @@ use std::{env, net::IpAddr};
 
 use tokio::net::TcpListener;
 
-use crate::{connection::handle_connection, error::Error, resp::Limits};
+use crate::{connection::handle_connection, db::Db, error::Error, resp::Limits};
 
 struct Config {
     bind: IpAddr,
@@ -56,6 +57,7 @@ impl Config {
 async fn main() -> Result<(), Error> {
     let config = Config::from_args()?;
     let listener = TcpListener::bind((config.bind, config.port)).await?;
+    let db = Db::default();
 
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -67,8 +69,9 @@ async fn main() -> Result<(), Error> {
         };
 
         let limits = config.limits;
+        let db = db.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, limits).await {
+            if let Err(error) = handle_connection(stream, limits, db).await {
                 eprintln!("{peer} disconnected: {error}");
             }
         });
