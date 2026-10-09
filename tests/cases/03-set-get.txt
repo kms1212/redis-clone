@@ -1,0 +1,43 @@
+# 세션 3: SET / GET / DEL / EXISTS
+# difftest는 줄마다 redis-cli를 새로 띄웁니다. SET 다음 줄의 GET은 이미 다른 커넥션입니다
+
+# 없는 키는 Null, SET 하면 다른 커넥션에서도 보임
+GET name
+SET name hello
+GET name
+
+# 덮어쓰기
+SET name world
+GET name
+
+# 커맨드 이름 대소문자, UTF-8 키와 값
+sEt 한글키 헬로월드
+GeT 한글키
+
+# DEL은 지운 개수를 셈. 같은 키를 두 번 적어도 한 번만 셈
+SET a 1
+SET b 2
+DEL a b nokey a
+GET a
+DEL a
+
+# EXISTS는 반대로 중복을 따로따로 셈
+SET c 3
+EXISTS c
+EXISTS c c nokey
+EXISTS nokey
+
+# 숫자처럼 보이는 값도 그대로 문자열
+SET n 10
+GET n
+
+# 인자 개수 에러
+SET
+SET k
+GET
+GET a b
+DEL
+EXISTS
+
+# SET 옵션은 S04 범위. 모르는 옵션은 syntax error
+SET k v foo
