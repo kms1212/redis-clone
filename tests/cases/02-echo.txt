@@ -1,0 +1,10 @@
+ECHO "Hello, world!"
+ECHO hello
+ECHO Hello, world!
+ECHO 헬로월드
+ECHO "헬로월드"
+
+EcHo hello
+ECHO
+
+ECHO 'hello, world!'
