@@ -1,3 +1,4 @@
+mod echo;
 mod ping;
 
 use crate::resp::error_reply;
@@ -5,6 +6,7 @@ use crate::resp::error_reply;
 /// A parsed command. Arguments are validated in `parse`, so every value here can be executed as is.
 pub(crate) enum Command {
     Ping(Option<Vec<u8>>),
+    Echo(Vec<u8>),
 }
 
 impl Command {
@@ -12,6 +14,9 @@ impl Command {
     pub(crate) fn parse(name: &[u8], args: Vec<Vec<u8>>) -> Result<Self, Vec<u8>> {
         if name.eq_ignore_ascii_case(b"PING") {
             return ping::parse(args);
+        }
+        if name.eq_ignore_ascii_case(b"ECHO") {
+            return echo::parse(args);
         }
 
         Err(unknown_command_reply(name, &args))
@@ -21,6 +26,7 @@ impl Command {
     pub(crate) fn execute(self) -> Vec<u8> {
         match self {
             Self::Ping(message) => ping::execute(message),
+            Self::Echo(message) => echo::execute(message),
         }
     }
 }
