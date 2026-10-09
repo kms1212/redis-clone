@@ -1,5 +1,5 @@
-use super::Command;
-use crate::resp::{bulk_string, error_reply};
+use super::{Command, wrong_args_reply};
+use crate::resp::bulk_string;
 
 /// `args` excludes the command name (`PING`).
 pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Vec<u8>> {
@@ -8,9 +8,7 @@ pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Vec<u8>> {
     match (args.next(), args.next()) {
         (None, _) => Ok(Command::Ping(None)),
         (Some(message), None) => Ok(Command::Ping(Some(message))),
-        _ => Err(error_reply(
-            b"ERR wrong number of arguments for 'ping' command",
-        )),
+        _ => Err(wrong_args_reply("ping")),
     }
 }
 

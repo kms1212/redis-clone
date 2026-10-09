@@ -31,6 +31,11 @@ impl Command {
     }
 }
 
+/// Real Redis uses the same message for every command, with the lowercase command name.
+fn wrong_args_reply(name: &str) -> Vec<u8> {
+    error_reply(format!("ERR wrong number of arguments for '{name}' command").as_bytes())
+}
+
 fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Vec<u8> {
     // Built from raw bytes, not String: a non-UTF-8 name must be echoed back exactly as received.
     let mut message = b"ERR unknown command '".to_vec();

@@ -1,14 +1,12 @@
-use super::Command;
-use crate::resp::{bulk_string, error_reply};
+use super::{Command, wrong_args_reply};
+use crate::resp::bulk_string;
 
 /// `args` excludes the command name (`ECHO`). ECHO takes exactly one argument.
 pub(super) fn parse(args: Vec<Vec<u8>>) -> Result<Command, Vec<u8>> {
     let mut args = args.into_iter();
     match (args.next(), args.next()) {
         (Some(message), None) => Ok(Command::Echo(message)),
-        _ => Err(error_reply(
-            b"ERR wrong number of arguments for 'echo' command",
-        )),
+        _ => Err(wrong_args_reply("echo")),
     }
 }
 
