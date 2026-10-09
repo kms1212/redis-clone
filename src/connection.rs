@@ -4,7 +4,7 @@ use tokio::{
 };
 
 use crate::{
-    command::build_reply,
+    command::Command,
     error::Error,
     resp::{read_bulk, read_length},
 };
@@ -18,16 +18,23 @@ pub(crate) async fn handle_connection(
 
     while let Some(count) = read_length(&mut reader, b'*', max_header_bytes).await? {
         // count 를 믿고 with_capacity 를 쓰면 `*999999999` 한 줄로 메모리를 크게 잡을 수 있습니다.
-        let mut command = Vec::new();
+        let mut frame = Vec::new();
         for _ in 0..count {
-            command.push(read_bulk(&mut reader, max_message_bytes, max_header_bytes).await?);
+            frame.push(read_bulk(&mut reader, max_message_bytes, max_header_bytes).await?);
         }
 
-        let reply = build_reply(&command);
         // 빈 배열(`*0\r\n`)에는 진짜 Redis도 아무 응답을 하지 않습니다.
-        if !reply.is_empty() {
-            reader.get_mut().write_all(&reply).await?;
+        if frame.is_empty() {
+            continue;
         }
+        // 첫 원소를 소유권째 꺼냅니다. 나머지 원소는 포인터만 한 칸씩 당겨지고, 바이트는 복사되지 않습니다.
+        let name = frame.remove(0);
+
+        let reply = match Command::parse(&name, frame) {
+            Ok(command) => command.execute(),
+            Err(reply) => reply,
+        };
+        reader.get_mut().write_all(&reply).await?;
     }
     Ok(())
 }

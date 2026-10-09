@@ -2,17 +2,27 @@ mod ping;
 
 use crate::resp::error_reply;
 
-pub(crate) fn build_reply(command: &[Vec<u8>]) -> Vec<u8> {
-    let Some(name) = command.first() else {
-        return Vec::new();
-    };
-    let args = &command[1..];
+/// 파싱이 끝난 커맨드입니다. 인자 검사는 `parse` 에서 끝나므로, 여기 담긴 값은 항상 실행할 수 있습니다.
+pub(crate) enum Command {
+    Ping(Option<Vec<u8>>),
+}
 
-    if name.eq_ignore_ascii_case(b"PING") {
-        return ping::reply(args);
+impl Command {
+    /// 실패하면 클라이언트에게 그대로 보낼 에러 응답을 돌려줍니다.
+    pub(crate) fn parse(name: &[u8], args: Vec<Vec<u8>>) -> Result<Self, Vec<u8>> {
+        if name.eq_ignore_ascii_case(b"PING") {
+            return ping::parse(args);
+        }
+
+        Err(unknown_command_reply(name, &args))
     }
 
-    unknown_command_reply(name, args)
+    // self 를 소비합니다. 담긴 인자를 복사하지 않고 응답으로 넘길 수 있습니다.
+    pub(crate) fn execute(self) -> Vec<u8> {
+        match self {
+            Self::Ping(message) => ping::execute(message),
+        }
+    }
 }
 
 fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Vec<u8> {
@@ -32,6 +42,16 @@ fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Vec<u8> {
     error_reply(&message)
 }
 
+/// 테스트에서 "이 바이트들을 보내면 무슨 응답이 나오나"를 한 줄로 쓰기 위한 도우미입니다.
+#[cfg(test)]
+pub(crate) fn reply_for(frame: &[&[u8]]) -> Vec<u8> {
+    let args = frame[1..].iter().map(|arg| arg.to_vec()).collect();
+    match Command::parse(frame[0], args) {
+        Ok(command) => command.execute(),
+        Err(reply) => reply,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,17 +59,12 @@ mod tests {
     #[test]
     fn 모르는_커맨드는_인자_유무에_따라_문구가_다르다() {
         assert_eq!(
-            build_reply(&[b"garbage".to_vec()]),
+            reply_for(&[b"garbage"]),
             b"-ERR unknown command 'garbage'\r\n"
         );
         assert_eq!(
-            build_reply(&[b"NOPE".to_vec(), b"a".to_vec(), b"b".to_vec()]),
+            reply_for(&[b"NOPE", b"a", b"b"]),
             b"-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n"
         );
-    }
-
-    #[test]
-    fn 빈_배열에는_응답하지_않는다() {
-        assert!(build_reply(&[]).is_empty());
     }
 }
