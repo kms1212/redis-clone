@@ -2,6 +2,7 @@ mod command;
 mod connection;
 mod db;
 mod error;
+mod number;
 mod reply;
 mod resp;
 
