@@ -13,7 +13,21 @@ impl Reply {
     pub(crate) fn encode(&self) -> Vec<u8> {
         match self {
             Self::Simple(text) => line(b'+', text.as_bytes()),
-            Self::Error(message) => line(b'-', message),
+            Self::Error(message) => {
+                // An error is one line, so a \r or \n inside it would end the reply early and
+                // desync the client. Real Redis replaces them with spaces; so do we, for every error.
+                let message: Vec<u8> = message
+                    .iter()
+                    .map(|&byte| {
+                        if byte == b'\r' || byte == b'\n' {
+                            b' '
+                        } else {
+                            byte
+                        }
+                    })
+                    .collect();
+                line(b'-', &message)
+            }
             Self::Bulk(data) => {
                 let mut out = format!("${}\r\n", data.len()).into_bytes();
                 out.extend_from_slice(data);
@@ -41,6 +55,10 @@ mod tests {
     fn encodes_each_type() {
         assert_eq!(Reply::Simple("PONG").encode(), b"+PONG\r\n");
         assert_eq!(Reply::Error(b"ERR x".to_vec()).encode(), b"-ERR x\r\n");
+        assert_eq!(
+            Reply::Error(b"ERR 'a\r\nb'".to_vec()).encode(),
+            b"-ERR 'a  b'\r\n"
+        );
         assert_eq!(Reply::Bulk(b"hi".to_vec()).encode(), b"$2\r\nhi\r\n");
         assert_eq!(Reply::Bulk(Vec::new()).encode(), b"$0\r\n\r\n");
         // Length is counted in bytes: two Hangul syllables are 6 bytes.

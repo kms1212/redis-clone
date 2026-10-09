@@ -28,13 +28,8 @@ impl ProtocolError {
             Self::InvalidMultibulkLength => b"invalid multibulk length".to_vec(),
             Self::InvalidBulkLength => b"invalid bulk length".to_vec(),
             Self::ExpectedBulk(got) => {
-                // Real Redis replaces \r and \n with spaces so the error stays on one line.
-                let got = match got {
-                    b'\r' | b'\n' => b' ',
-                    other => *other,
-                };
                 let mut message = b"expected '$', got '".to_vec();
-                message.push(got);
+                message.push(*got);
                 message.push(b'\'');
                 message
             }
@@ -90,10 +85,10 @@ mod tests {
             ProtocolError::ExpectedBulk(b'+').reply(),
             Reply::Error(b"ERR Protocol error: expected '$', got '+'".to_vec())
         );
-        // A line break would split the reply in two, so it becomes a space.
+        // The \r becomes a space when encoded (see Reply::encode).
         assert_eq!(
-            ProtocolError::ExpectedBulk(b'\r').reply(),
-            Reply::Error(b"ERR Protocol error: expected '$', got ' '".to_vec())
+            ProtocolError::ExpectedBulk(b'\r').reply().encode(),
+            b"-ERR Protocol error: expected '$', got ' '\r\n"
         );
         // Non-UTF-8 bytes go out unchanged.
         assert_eq!(
