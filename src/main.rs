@@ -7,13 +7,12 @@ use std::{env, net::IpAddr};
 
 use tokio::net::TcpListener;
 
-use crate::{connection::handle_connection, error::Error};
+use crate::{connection::handle_connection, error::Error, resp::Limits};
 
 struct Config {
     bind: IpAddr,
     port: u16,
-    max_message_bytes: usize,
-    max_header_bytes: usize,
+    limits: Limits,
 }
 
 impl Config {
@@ -21,8 +20,10 @@ impl Config {
         let mut config = Self {
             bind: IpAddr::from([127, 0, 0, 1]),
             port: 6380,
-            max_message_bytes: 1_048_576,
-            max_header_bytes: 64,
+            limits: Limits {
+                message_bytes: 1_048_576,
+                header_bytes: 64,
+            },
         };
 
         let mut args = env::args().skip(1);
@@ -32,16 +33,18 @@ impl Config {
                 "--bind" => config.bind = value.parse().map_err(|_| Error::InvalidRequest)?,
                 "--port" => config.port = value.parse().map_err(|_| Error::InvalidRequest)?,
                 "--max-message-bytes" => {
-                    config.max_message_bytes = value.parse().map_err(|_| Error::InvalidRequest)?;
+                    config.limits.message_bytes =
+                        value.parse().map_err(|_| Error::InvalidRequest)?;
                 }
                 "--max-header-bytes" => {
-                    config.max_header_bytes = value.parse().map_err(|_| Error::InvalidRequest)?;
+                    config.limits.header_bytes =
+                        value.parse().map_err(|_| Error::InvalidRequest)?;
                 }
                 _ => return Err(Error::InvalidRequest),
             }
         }
 
-        if config.max_header_bytes == 0 {
+        if config.limits.header_bytes == 0 {
             return Err(Error::InvalidRequest);
         }
         Ok(config)
@@ -62,11 +65,9 @@ async fn main() -> Result<(), Error> {
             }
         };
 
-        let max_message_bytes = config.max_message_bytes;
-        let max_header_bytes = config.max_header_bytes;
+        let limits = config.limits;
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, max_message_bytes, max_header_bytes).await
-            {
+            if let Err(error) = handle_connection(stream, limits).await {
                 eprintln!("{peer} disconnected: {error}");
             }
         });

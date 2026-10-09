@@ -3,23 +3,19 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use crate::{
     command::Command,
     error::Error,
-    resp::{read_array_len, read_bulk},
+    resp::{Limits, read_array_len, read_bulk},
 };
 
 /// Enough for almost every command; larger arrays just grow as usual.
 const MAX_PREALLOCATED_ARGS: usize = 16;
 
 // Accepts any readable and writable stream, not just TcpStream, so tests can pass tokio::io::duplex.
-pub(crate) async fn handle_connection<S>(
-    stream: S,
-    max_message_bytes: usize,
-    max_header_bytes: usize,
-) -> Result<(), Error>
+pub(crate) async fn handle_connection<S>(stream: S, limits: Limits) -> Result<(), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut reader = BufReader::new(stream);
-    let result = serve(&mut reader, max_message_bytes, max_header_bytes).await;
+    let result = serve(&mut reader, limits).await;
     if let Err(Error::Protocol(error)) = &result {
         // Like real Redis: tell the client what was wrong, then close the connection.
         reader.get_mut().write_all(&error.reply()).await?;
@@ -28,25 +24,21 @@ where
 }
 
 /// Reads and answers commands until the client disconnects or sends something malformed.
-async fn serve<S>(
-    reader: &mut BufReader<S>,
-    max_message_bytes: usize,
-    max_header_bytes: usize,
-) -> Result<(), Error>
+async fn serve<S>(reader: &mut BufReader<S>, limits: Limits) -> Result<(), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    while let Some(count) = read_array_len(reader, max_header_bytes).await? {
+    while let Some(count) = read_array_len(reader, limits).await? {
         // Real Redis sends no reply to an empty array (`*0\r\n`) either.
         if count == 0 {
             continue;
         }
-        let name = read_bulk(reader, max_message_bytes, max_header_bytes).await?;
+        let name = read_bulk(reader, limits).await?;
 
         // Capped: trusting count alone would let a single `*999999999` line reserve a lot of memory.
         let mut args = Vec::with_capacity((count - 1).min(MAX_PREALLOCATED_ARGS));
         for _ in 1..count {
-            args.push(read_bulk(reader, max_message_bytes, max_header_bytes).await?);
+            args.push(read_bulk(reader, limits).await?);
         }
 
         let reply = match Command::parse(&name, args) {
@@ -72,7 +64,13 @@ mod tests {
     /// Attaches the server to an in-memory fake socket and returns the client end.
     fn connect() -> DuplexStream {
         let (client, server) = duplex(4096);
-        tokio::spawn(handle_connection(server, 1024, 64));
+        tokio::spawn(handle_connection(
+            server,
+            Limits {
+                message_bytes: 1024,
+                header_bytes: 64,
+            },
+        ));
         client
     }
 

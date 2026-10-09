@@ -5,17 +5,27 @@ use crate::error::{Error, ProtocolError};
 /// Real Redis rejects a multibulk count above this.
 const MAX_MULTIBULK_LENGTH: i64 = i32::MAX as i64;
 
+/// Size limits applied while reading a request.
+/// `Copy` because it is two numbers: every connection simply gets its own copy.
+#[derive(Clone, Copy)]
+pub(crate) struct Limits {
+    /// Largest bulk string accepted, in bytes.
+    pub(crate) message_bytes: usize,
+    /// Longest `*<count>` or `$<length>` header line accepted, in bytes.
+    pub(crate) header_bytes: usize,
+}
+
 /// Reads one header line and returns it without the terminator. `None` on a clean EOF.
 /// Generic over the reader so tests can pass an in-memory buffer instead of a socket.
 async fn read_header<R: AsyncBufRead + Unpin>(
     reader: &mut R,
-    max_header_bytes: usize,
+    limits: Limits,
 ) -> Result<Option<Vec<u8>>, Error> {
     // Like real Redis, the line ends at `\r` and the byte after it is skipped without checking.
     // That is why `*1\n` is an invalid length rather than a complete header.
     let mut header = Vec::new();
     let bytes_read = reader
-        .take(max_header_bytes as u64)
+        .take(limits.header_bytes as u64)
         .read_until(b'\r', &mut header)
         .await?;
     if bytes_read == 0 {
@@ -34,9 +44,9 @@ async fn read_header<R: AsyncBufRead + Unpin>(
 /// Reads `*<count>`. `None` on a clean EOF.
 pub(crate) async fn read_array_len<R: AsyncBufRead + Unpin>(
     reader: &mut R,
-    max_header_bytes: usize,
+    limits: Limits,
 ) -> Result<Option<usize>, Error> {
-    let Some(header) = read_header(reader, max_header_bytes).await? else {
+    let Some(header) = read_header(reader, limits).await? else {
         return Ok(None);
     };
     let Some((b'*', digits)) = header.split_first() else {
@@ -54,10 +64,9 @@ pub(crate) async fn read_array_len<R: AsyncBufRead + Unpin>(
 /// Reads `$<length>` and the data after it.
 pub(crate) async fn read_bulk<R: AsyncBufRead + Unpin>(
     reader: &mut R,
-    max_bytes: usize,
-    max_header_bytes: usize,
+    limits: Limits,
 ) -> Result<Vec<u8>, Error> {
-    let header = read_header(reader, max_header_bytes)
+    let header = read_header(reader, limits)
         .await?
         .ok_or(Error::InvalidRequest)?;
     let digits = match header.split_first() {
@@ -69,7 +78,7 @@ pub(crate) async fn read_bulk<R: AsyncBufRead + Unpin>(
 
     let length = parse_integer(digits)
         .and_then(|length| usize::try_from(length).ok())
-        .filter(|length| *length <= max_bytes)
+        .filter(|length| *length <= limits.message_bytes)
         .ok_or(ProtocolError::InvalidBulkLength)?;
 
     let mut data = Vec::new();
@@ -119,12 +128,17 @@ mod tests {
     use super::*;
 
     // `&[u8]` is itself an async buffered reader, so tests can parse straight from a byte string.
+    const LIMITS: Limits = Limits {
+        message_bytes: 1024,
+        header_bytes: 64,
+    };
+
     async fn array_len(mut input: &[u8]) -> Result<Option<usize>, Error> {
-        read_array_len(&mut input, 64).await
+        read_array_len(&mut input, LIMITS).await
     }
 
     async fn bulk(mut input: &[u8]) -> Result<Vec<u8>, Error> {
-        read_bulk(&mut input, 1024, 64).await
+        read_bulk(&mut input, LIMITS).await
     }
 
     #[test]
