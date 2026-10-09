@@ -1,7 +1,4 @@
-use tokio::{
-    io::{AsyncWriteExt, BufReader},
-    net::TcpStream,
-};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 use crate::{
     command::Command,
@@ -9,11 +6,15 @@ use crate::{
     resp::{read_bulk, read_length},
 };
 
-pub(crate) async fn handle_connection(
-    stream: TcpStream,
+// TcpStream 대신 "읽고 쓸 수 있는 무엇이든"을 받습니다. 테스트에서는 tokio::io::duplex 를 넘깁니다.
+pub(crate) async fn handle_connection<S>(
+    stream: S,
     max_message_bytes: usize,
     max_header_bytes: usize,
-) -> Result<(), Error> {
+) -> Result<(), Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let mut reader = BufReader::new(stream);
 
     while let Some(count) = read_length(&mut reader, b'*', max_header_bytes).await? {

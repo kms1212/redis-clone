@@ -1,12 +1,10 @@
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
-    net::TcpStream,
-};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt};
 
 use crate::error::Error;
 
-pub(crate) async fn read_length(
-    reader: &mut BufReader<TcpStream>,
+// 소켓이 아니라 "줄 단위로 읽을 수 있는 무엇이든"을 받습니다. 테스트에서는 메모리 버퍼를 넘깁니다.
+pub(crate) async fn read_length<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
     prefix: u8,
     max_header_bytes: usize,
 ) -> Result<Option<usize>, Error> {
@@ -33,8 +31,8 @@ pub(crate) async fn read_length(
     Ok(Some(length))
 }
 
-pub(crate) async fn read_bulk(
-    reader: &mut BufReader<TcpStream>,
+pub(crate) async fn read_bulk<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
     max_bytes: usize,
     max_header_bytes: usize,
 ) -> Result<Vec<u8>, Error> {
