@@ -98,27 +98,66 @@ async fn handle_connection(
     let mut reader = BufReader::new(stream);
 
     while let Some(count) = read_length(&mut reader, b'*', max_header_bytes).await? {
-        if count != 1 && count != 2 {
-            return Err(Error::InvalidRequest);
+        // count 를 믿고 with_capacity 를 쓰면 `*999999999` 한 줄로 메모리를 크게 잡을 수 있습니다.
+        let mut command = Vec::new();
+        for _ in 0..count {
+            command.push(read_bulk(&mut reader, max_message_bytes, max_header_bytes).await?);
         }
 
-        let command = read_bulk(&mut reader, b"PING".len(), max_header_bytes).await?;
-        if !command.eq_ignore_ascii_case(b"PING") {
-            return Err(Error::InvalidRequest);
-        }
-
-        if count == 1 {
-            reader.get_mut().write_all(b"+PONG\r\n").await?;
-        } else {
-            let message = read_bulk(&mut reader, max_message_bytes, max_header_bytes).await?;
-            let header = format!("${}\r\n", message.len());
-            let stream = reader.get_mut();
-            stream.write_all(header.as_bytes()).await?;
-            stream.write_all(&message).await?;
-            stream.write_all(b"\r\n").await?;
+        let reply = build_reply(&command);
+        // 빈 배열(`*0\r\n`)에는 진짜 Redis도 아무 응답을 하지 않습니다.
+        if !reply.is_empty() {
+            reader.get_mut().write_all(&reply).await?;
         }
     }
     Ok(())
+}
+
+fn build_reply(command: &[Vec<u8>]) -> Vec<u8> {
+    let Some(name) = command.first() else {
+        return Vec::new();
+    };
+
+    if name.eq_ignore_ascii_case(b"PING") {
+        return match command.len() {
+            1 => b"+PONG\r\n".to_vec(),
+            2 => bulk_string(&command[1]),
+            _ => error_reply(b"ERR wrong number of arguments for 'ping' command"),
+        };
+    }
+
+    unknown_command_reply(name, &command[1..])
+}
+
+fn bulk_string(value: &[u8]) -> Vec<u8> {
+    let mut reply = format!("${}\r\n", value.len()).into_bytes();
+    reply.extend_from_slice(value);
+    reply.extend_from_slice(b"\r\n");
+    reply
+}
+
+fn error_reply(message: &[u8]) -> Vec<u8> {
+    let mut reply = vec![b'-'];
+    reply.extend_from_slice(message);
+    reply.extend_from_slice(b"\r\n");
+    reply
+}
+
+fn unknown_command_reply(name: &[u8], args: &[Vec<u8>]) -> Vec<u8> {
+    // String 을 거치지 않고 바이트로 이어 붙입니다. UTF-8 이 아닌 이름도 받은 그대로 돌려줘야 해서입니다.
+    let mut message = b"ERR unknown command '".to_vec();
+    message.extend_from_slice(name);
+    message.push(b'\'');
+    if !args.is_empty() {
+        message.extend_from_slice(b", with args beginning with: ");
+        for arg in args {
+            // 진짜 Redis는 인자마다 뒤에 공백을 하나씩 붙입니다. 마지막 인자 뒤에도 붙습니다.
+            message.push(b'\'');
+            message.extend_from_slice(arg);
+            message.extend_from_slice(b"' ");
+        }
+    }
+    error_reply(&message)
 }
 
 async fn read_length(
@@ -172,4 +211,39 @@ async fn read_bulk(
         return Err(Error::InvalidRequest);
     }
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ping_응답이_진짜_redis와_같다() {
+        assert_eq!(build_reply(&[b"PiNg".to_vec()]), b"+PONG\r\n");
+        assert_eq!(
+            build_reply(&[b"PING".to_vec(), "한글".into()]),
+            "$6\r\n한글\r\n".as_bytes()
+        );
+        assert_eq!(
+            build_reply(&[b"PING".to_vec(), b"a".to_vec(), b"b".to_vec()]),
+            b"-ERR wrong number of arguments for 'ping' command\r\n"
+        );
+    }
+
+    #[test]
+    fn 모르는_커맨드는_인자_유무에_따라_문구가_다르다() {
+        assert_eq!(
+            build_reply(&[b"garbage".to_vec()]),
+            b"-ERR unknown command 'garbage'\r\n"
+        );
+        assert_eq!(
+            build_reply(&[b"NOPE".to_vec(), b"a".to_vec(), b"b".to_vec()]),
+            b"-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n"
+        );
+    }
+
+    #[test]
+    fn 빈_배열에는_응답하지_않는다() {
+        assert!(build_reply(&[]).is_empty());
+    }
 }
